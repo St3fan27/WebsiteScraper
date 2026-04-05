@@ -1,13 +1,22 @@
 import asyncio
 from playwright.async_api import async_playwright, Playwright, Browser
 from bs4 import BeautifulSoup
+import os
+import json
 
 class TechAnalyzer:
     
-    def __init__(self, domains):
+    def __init__(self, domains, folder="technologies"):
         self.domains = domains
         self.results = {}
         self.browser: Browser | None = None
+        self.tech_data = {}
+
+        for file in os.listdir(folder):
+            if file.endswith(".json"):
+                with open(f"{folder}/{file}", 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.tech_data.update(data)
 
     async def start_browser(self, p: Playwright):
         self.webkit = p.webkit
@@ -35,10 +44,19 @@ class TechAnalyzer:
                     # I use try to avoid stopping the entire script when a site goes down
                     try:
                         # I wait 30 seconds to see if the site works if not we throw an error
-                        await page.goto(url, timeout=30000)
+                        response = await page.goto(url, timeout=30000)
                         # I wait for JavaScript to load
                         await page.wait_for_timeout(2000)
-                        await page.screenshot(path=f"tests/{index}.png")
+
+                        html_content = await page.content()
+                        if response.headers:
+                            headers = response.headers
+                        else:
+                            headers = {}
+
+                        tech = self.extract_tech(html_content, headers)
+                        self.results[url] = tech
+
                         print(f"{index} Ok")
                         ok = True
                         break
@@ -61,6 +79,10 @@ class TechAnalyzer:
             finally:
                 if context:
                     await context.close()
+
+    def extract_tech(self, html, headers):
+        detected = []
+        soup = BeautifulSoup(html, 'html.parser')
 
     async def close_browser(self):
         if self.browser:
