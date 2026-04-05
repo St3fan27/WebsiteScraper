@@ -3,6 +3,7 @@ from playwright.async_api import async_playwright, Playwright, Browser
 from bs4 import BeautifulSoup
 import os
 import json
+import re
 
 class TechAnalyzer:
     
@@ -54,7 +55,7 @@ class TechAnalyzer:
                         else:
                             headers = {}
 
-                        tech = self.extract_tech(html_content, headers)
+                        tech = self.extract_tech(html_content, headers, index)
                         self.results[url] = tech
 
                         print(f"{index} Ok")
@@ -80,9 +81,29 @@ class TechAnalyzer:
                 if context:
                     await context.close()
 
-    def extract_tech(self, html, headers):
+    def extract_tech(self, html, headers, index):
         detected = []
         soup = BeautifulSoup(html, 'html.parser')
+
+        for tech_name, rules in self.tech_data.items():
+
+            if "html" in rules:
+                html_rules = rules["html"]
+                
+                if isinstance(html_rules, str):
+                    html_rules = [html_rules]
+
+                for rule in html_rules:
+                    rule_copy = rule.split('\\;')[0]
+
+                    try:
+                        if re.search(rule_copy, html, re.IGNORECASE):
+                            detected.append(tech_name)
+                            break
+                    except re.error:
+                        pass
+        
+        print(f"{index} {len(detected)} number of tech")
 
     async def close_browser(self):
         if self.browser:
