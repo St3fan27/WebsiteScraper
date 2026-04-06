@@ -1,17 +1,17 @@
-import asyncio
-from playwright.async_api import async_playwright, Playwright, Browser
+from playwright.async_api import Playwright, Browser
 from bs4 import BeautifulSoup
 import os
 import json
 import re
+import pandas as pd
 
 class TechAnalyzer:
     
-    def __init__(self, domains, folder="technologies"):
-        self.domains = domains
+    def __init__(self, folder="technologies"):
         self.results = {}
         self.browser: Browser | None = None
         self.tech_data = {}
+        self.invalid_regex = []
 
         for file in os.listdir(folder):
             if file.endswith(".json"):
@@ -58,7 +58,6 @@ class TechAnalyzer:
                         tech = self.extract_tech(html_content, headers, index)
                         self.results[url] = tech
 
-                        print(f"{index} Ok")
                         ok = True
                         break
 
@@ -82,8 +81,17 @@ class TechAnalyzer:
                     await context.close()
 
     def extract_tech(self, html, headers, index):
-        detected = []
+        detected = set()
         soup = BeautifulSoup(html, 'html.parser')
+
+        headers_low = {k.lower(): str(v) for k, v in headers.items()}
+        scripts = [script.get('src') for script in soup.find_all('script') if script.get('src')]
+        meta_tags = {}
+        for meta in soup.find_all('meta'):
+            name = meta.get('name') or meta.get('property')
+            content = meta.get('content')
+            if name and content:
+                meta_tags[name.lower()] = content
 
         for tech_name, rules in self.tech_data.items():
 
@@ -98,13 +106,87 @@ class TechAnalyzer:
 
                     try:
                         if re.search(rule_copy, html, re.IGNORECASE):
-                            detected.append(tech_name)
+                            detected.add(tech_name)
                             break
                     except re.error:
-                        pass
-        
-        print(f"{index} {len(detected)} number of tech")
+                        self.invalid_regex.append(f"{index} {rule_copy}")
+            
+            if "scriptSrc" in rules:
+                script_rules = rules["scriptSrc"]
+                if isinstance(script_rules, str):
+                    script_rules = [script_rules]
+                
+                for rule in script_rules:
+                    rule_copy = rule.split('\\;')[0]
+                    for src in scripts:
+                        try:
+                            if re.search(rule_copy, src, re.IGNORECASE):
+                                detected.add(tech_name)
+                                break
+                        except re.error:
+                            self.invalid_regex.append(f"{index} {rule_copy}")
 
+            if "meta" in rules:
+                for meta, meta_r in rules["meta"].items():
+                    meta_copy = meta.lower()
+                    
+                    if meta_copy in meta_tags:
+                        if isinstance(meta_r, list):
+                            meta_r = meta_r[0] 
+                            
+                        rule_copy = meta_r.split('\\;')[0]
+                        try:
+                            if re.search(rule_copy, meta_tags[meta_copy], re.IGNORECASE):
+                                detected.add(tech_name)
+                        except re.error:
+                            self.invalid_regex.append(f"{index} {rule_copy}")
+            
+            if "headers" in rules:
+                for header, header_r in rules["headers"].items():
+                    header_copy = header.lower()
+                    
+                    if header_copy in headers_low:
+                        rule_copy = header_r.split('\\;')[0]
+                        try:
+                            if re.search(rule_copy, headers_low[header_copy], re.IGNORECASE):
+                                detected.add(tech_name)
+                        except re.error:
+                            self.invalid_regex.append(f"{index} {rule_copy}")
+
+        detected_list = list(detected)
+        print(f"{index} {len(detected_list)} tech")
+
+        return detected_list
+    
+    def export_data(self, file = "tech_results.parquet", error_f = "regex_errors.txt"): 
+        
+        if not self.results:
+            print("No technologies")
+            return
+
+        techs = set()
+
+        data = []
+        for url, technologies in self.results.items():
+            techs.update(technologies)
+            data.append({
+                "url": url,
+                "technologies": technologies,
+                "tech_count": len(technologies)
+            })
+
+        df = pd.DataFrame(data)
+        print(f"Unique tech: {len(techs)}")
+        df.to_parquet(file, engine="pyarrow", index=False)
+                        
+        if self.invalid_regex:
+            
+            with open(error_f, "w", encoding="utf-8") as f:
+                f.write(f"Total regex errors: {len(self.invalid_regex)}\n")
+                f.write("-" * 50 + "\n")
+                for error in self.invalid_regex:
+                    f.write(f"{error}\n")
+                    
     async def close_browser(self):
         if self.browser:
            await self.browser.close()
