@@ -91,6 +91,7 @@ class TechAnalyzer:
 
     def extract_tech(self, html, headers, cookies, js_keys, index):
         detected = set()
+        possible = set()
         soup = BeautifulSoup(html, 'html.parser')
 
         headers_low = {k.lower(): str(v) for k, v in headers.items()}
@@ -115,7 +116,7 @@ class TechAnalyzer:
 
                     try:
                         if re.search(rule_copy, html, re.IGNORECASE):
-                            detected.add(tech_name)
+                            possible.add(tech_name)
                             break
                     except re.error:
                         self.invalid_regex.append(f"{index} {rule_copy}")
@@ -196,10 +197,14 @@ class TechAnalyzer:
                         detected.add(implied_clean)
                         techs_to_check.append(implied_clean)
 
-        detected_list = list(detected)
-        print(f"{index} {len(detected_list)} tech")
+        possible = possible - detected
+        print(f"{index} {len(possible)} possible tech")
+        print(f"{index} {len(detected)} tech")
 
-        return detected_list
+        return {
+            "certain": list(detected),
+            "possible": list(possible)
+        }
     
     def export_data(self, file = "tech_results.parquet", error_f = "regex_errors.txt"): 
         
@@ -208,22 +213,31 @@ class TechAnalyzer:
             return
 
         techs = set()
+        possible_techs = set()
 
         data = []
-        for url, technologies in self.results.items():
-            techs.update(technologies)
+        for url, tech_dict in self.results.items():
+            certain = tech_dict["certain"]
+            possible = tech_dict["possible"]
+            
+            techs.update(certain)
+            possible_techs.update(possible)
+            
             data.append({
                 "url": url,
-                "technologies": technologies,
-                "tech_count": len(technologies)
+                "technologies": certain,
+                "tech_count": len(certain),
+                "possible_technologies": possible,
+                "possible_tech_count": len(possible)
             })
 
         df = pd.DataFrame(data)
-        print(f"Unique tech: {len(techs)}")
+        print(f"Certain Tech: {len(techs)}")
+        print(f"Possible Tech: {len(possible_techs)}")
+        
         df.to_parquet(file, engine="pyarrow", index=False)
                         
         if self.invalid_regex:
-            
             with open(error_f, "w", encoding="utf-8") as f:
                 f.write(f"Total regex errors: {len(self.invalid_regex)}\n")
                 f.write("-" * 50 + "\n")
