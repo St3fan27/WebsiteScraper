@@ -13,6 +13,9 @@ class TechAnalyzer:
         self.tech_data = {}
         self.invalid_regex = []
 
+        with open("links_error.txt", "w", encoding="utf-8") as f:
+            print("Created links_error")
+
         for file in os.listdir(folder):
             if file.endswith(".json"):
                 with open(f"{folder}/{file}", 'r', encoding='utf-8') as f:
@@ -54,8 +57,14 @@ class TechAnalyzer:
                             headers = response.headers
                         else:
                             headers = {}
+                        
+                        cookies = await context.cookies(url)
+                        cookie_dict = {c['name']: c['value'] for c in cookies}
 
-                        tech = self.extract_tech(html_content, headers, index)
+                        js_keys = await page.evaluate("() => Object.keys(window)")
+                        js_keys_set = set(js_keys)
+
+                        tech = self.extract_tech(html_content, headers, cookie_dict, js_keys_set, index)
                         self.results[url] = tech
 
                         ok = True
@@ -80,7 +89,7 @@ class TechAnalyzer:
                 if context:
                     await context.close()
 
-    def extract_tech(self, html, headers, index):
+    def extract_tech(self, html, headers, cookies, js_keys, index):
         detected = set()
         soup = BeautifulSoup(html, 'html.parser')
 
@@ -152,6 +161,40 @@ class TechAnalyzer:
                                 detected.add(tech_name)
                         except re.error:
                             self.invalid_regex.append(f"{index} {rule_copy}")
+
+            if "cookies" in rules:
+                for cookie_name, cookie_r in rules["cookies"].items():
+                    if cookie_name in cookies:
+                        if cookie_r == "":
+                            detected.add(tech_name)
+                        else:
+                            rule_copy = cookie_r.split('\\;')[0]
+                            try:
+                                if re.search(rule_copy, cookies[cookie_name], re.IGNORECASE):
+                                    detected.add(tech_name)
+                            except re.error:
+                                self.invalid_regex.append(f"{index} {rule_copy}")
+            
+            if "js" in rules:
+                for js_prop, js_r in rules["js"].items():
+                    base_obj = js_prop.split('.')[0]
+                    if base_obj in js_keys:
+                        detected.add(tech_name)
+
+        techs_to_check = list(detected)
+        while techs_to_check:
+            current_tech = techs_to_check.pop()
+            
+            if current_tech in self.tech_data and "implies" in self.tech_data[current_tech]:
+                implied_techs = self.tech_data[current_tech]["implies"]
+                if isinstance(implied_techs, str):
+                    implied_techs = [implied_techs]
+                    
+                for implied in implied_techs:
+                    implied_clean = implied.split('\\;')[0]
+                    if implied_clean not in detected:
+                        detected.add(implied_clean)
+                        techs_to_check.append(implied_clean)
 
         detected_list = list(detected)
         print(f"{index} {len(detected_list)} tech")
