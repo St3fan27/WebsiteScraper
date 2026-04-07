@@ -13,9 +13,11 @@ class TechAnalyzer:
         self.tech_data = {}
         self.invalid_regex = []
 
+        # Clear or create the error log file at the start of each run for a fresh session
         with open("links_error.txt", "w", encoding="utf-8") as f:
             print("Created links_error")
 
+        # Load tech definitions into memory
         for file in os.listdir(folder):
             if file.endswith(".json"):
                 with open(f"{folder}/{file}", 'r', encoding='utf-8') as f:
@@ -90,8 +92,8 @@ class TechAnalyzer:
                     await context.close()
 
     def extract_tech(self, html, headers, cookies, js_keys, index):
-        detected = set()
-        possible = set()
+        detected = set() # Confirmed technologies
+        possible = set() # Technologies mentioned in HTML but unverified
         soup = BeautifulSoup(html, 'html.parser')
 
         headers_low = {k.lower(): str(v) for k, v in headers.items()}
@@ -104,7 +106,7 @@ class TechAnalyzer:
                 meta_tags[name.lower()] = content
 
         for tech_name, rules in self.tech_data.items():
-
+            # HTML detection
             if "html" in rules:
                 html_rules = rules["html"]
                 
@@ -120,7 +122,7 @@ class TechAnalyzer:
                             break
                     except re.error:
                         self.invalid_regex.append(f"{index} {rule_copy}")
-            
+            # Script source detection
             if "scriptSrc" in rules:
                 script_rules = rules["scriptSrc"]
                 if isinstance(script_rules, str):
@@ -135,7 +137,7 @@ class TechAnalyzer:
                                 break
                         except re.error:
                             self.invalid_regex.append(f"{index} {rule_copy}")
-
+            # Meta Tag detection
             if "meta" in rules:
                 for meta, meta_r in rules["meta"].items():
                     meta_copy = meta.lower()
@@ -150,7 +152,7 @@ class TechAnalyzer:
                                 detected.add(tech_name)
                         except re.error:
                             self.invalid_regex.append(f"{index} {rule_copy}")
-            
+            # HTTP header detection
             if "headers" in rules:
                 for header, header_r in rules["headers"].items():
                     header_copy = header.lower()
@@ -162,7 +164,7 @@ class TechAnalyzer:
                                 detected.add(tech_name)
                         except re.error:
                             self.invalid_regex.append(f"{index} {rule_copy}")
-
+            # Cookie detection
             if "cookies" in rules:
                 for cookie_name, cookie_r in rules["cookies"].items():
                     if cookie_name in cookies:
@@ -175,13 +177,13 @@ class TechAnalyzer:
                                     detected.add(tech_name)
                             except re.error:
                                 self.invalid_regex.append(f"{index} {rule_copy}")
-            
+            # Global JS variable detection
             if "js" in rules:
                 for js_prop, js_r in rules["js"].items():
                     base_obj = js_prop.split('.')[0]
                     if base_obj in js_keys:
                         detected.add(tech_name)
-
+        # Implies, tech used by other tech
         techs_to_check = list(detected)
         while techs_to_check:
             current_tech = techs_to_check.pop()
@@ -196,7 +198,7 @@ class TechAnalyzer:
                     if implied_clean not in detected:
                         detected.add(implied_clean)
                         techs_to_check.append(implied_clean)
-
+        # Deviding the results in 2 categories
         possible = possible - detected
         print(f"{index} {len(possible)} possible tech")
         print(f"{index} {len(detected)} tech")
@@ -230,13 +232,13 @@ class TechAnalyzer:
                 "possible_technologies": possible,
                 "possible_tech_count": len(possible)
             })
-
+        # Printing the technologies found
         df = pd.DataFrame(data)
         print(f"Certain Tech: {len(techs)}")
         print(f"Possible Tech: {len(possible_techs)}")
         
         df.to_parquet(file, engine="pyarrow", index=False)
-                        
+        # Save invalid regex patterns    
         if self.invalid_regex:
             with open(error_f, "w", encoding="utf-8") as f:
                 f.write(f"Total regex errors: {len(self.invalid_regex)}\n")
